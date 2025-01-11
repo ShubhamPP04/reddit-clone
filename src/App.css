@@ -434,7 +434,7 @@ body {
   padding: 12px;
   background-color: var(--surface-color);
   border-top: 1px solid var(--border-color);
-  transition: background-color 0.2s;
+  transition: background-color 0.2s, transform 0.1s;
   cursor: pointer;
 }
 
@@ -444,6 +444,7 @@ body {
 
 .post:hover {
   background-color: var(--hover-color);
+  transform: translateY(-1px);
 }
 
 /* Sidebar Styles */

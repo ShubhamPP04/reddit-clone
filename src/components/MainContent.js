@@ -184,7 +184,7 @@ function MainContent({ currentSection }) {
 
       <div className="posts-list">
         {posts.map(post => (
-          <article key={post.id} className="post">
+          <article key={post.id} className="post" onClick={() => window.open(`https://reddit.com${post.permalink}`, '_blank')}>
             <div className="vote-section">
               <button className="vote-button" aria-label="Upvote">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
