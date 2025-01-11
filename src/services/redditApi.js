@@ -1,7 +1,7 @@
 const BASE_URL = 'https://www.reddit.com';
 const CACHE_DURATION = 2 * 60 * 1000; // 2 minutes cache
-const RATE_LIMIT_INTERVAL = 100; // Reduced to 100ms
-const MAX_RETRIES = 2; // Reduced retries
+const RATE_LIMIT_INTERVAL = 1000; // 1 second
+const MAX_RETRIES = 3;
 
 class RedditAPI {
   constructor() {
@@ -12,28 +12,23 @@ class RedditAPI {
 
   async makeRequest(endpoint, params = {}, retryCount = 0) {
     try {
-      // Build URL
       const searchParams = new URLSearchParams({
         raw_json: '1',
         ...params
       }).toString();
 
       const url = `${BASE_URL}${endpoint}${endpoint.includes('?') ? '&' : '?'}${searchParams}`;
+      console.log('Making request to:', url);
 
-      // Check for pending request for the same URL
       if (this.pendingRequests.has(url)) {
         return this.pendingRequests.get(url);
       }
 
-      // Check cache
-      if (retryCount === 0) {
-        const cached = this.cache.get(url);
-        if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
-          return cached.data;
-        }
+      const cached = this.cache.get(url);
+      if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
+        return cached.data;
       }
 
-      // Basic rate limiting
       const now = Date.now();
       const timeSinceLastRequest = now - this.lastRequestTime;
       if (timeSinceLastRequest < RATE_LIMIT_INTERVAL) {
@@ -41,104 +36,72 @@ class RedditAPI {
       }
       this.lastRequestTime = Date.now();
 
-      // Create the request promise
-      const requestPromise = (async () => {
-        const response = await fetch(url, {
-          headers: {
-            'Accept': 'application/json',
-            'User-Agent': 'web:reddit-clone:v1.0.0',
-          },
-          cache: 'no-cache'
-        });
-
-        if (response.status === 429) {
-          if (retryCount < MAX_RETRIES) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            return this.makeRequest(endpoint, params, retryCount + 1);
-          }
-          throw new Error('Rate limit exceeded. Please try again later.');
+      const requestPromise = fetch(url, {
+        headers: {
+          'Accept': 'application/json'
         }
-
+      }).then(async response => {
         if (!response.ok) {
-          throw new Error(`Reddit API error: ${response.status} ${response.statusText}`);
+          throw new Error(`HTTP error! status: ${response.status}`);
         }
-
         const data = await response.json();
-
-        // Cache successful responses
-        if (retryCount === 0) {
-          this.cache.set(url, {
-            data,
-            timestamp: Date.now()
-          });
-        }
-
+        this.cache.set(url, {
+          data,
+          timestamp: Date.now()
+        });
         return data;
-      })();
+      });
 
-      // Store the pending request
       this.pendingRequests.set(url, requestPromise);
-
-      // Clean up after request completes
       requestPromise.finally(() => {
         this.pendingRequests.delete(url);
       });
 
       return requestPromise;
     } catch (error) {
-      console.error('Reddit API request failed:', error);
-      
-      if (error.message.includes('Failed to fetch') && retryCount < MAX_RETRIES) {
-        await new Promise(resolve => setTimeout(resolve, 500)); // Reduced retry delay
-        return this.makeRequest(endpoint, params, retryCount + 1);
-      }
-      
-      throw new Error('Failed to fetch data from Reddit. Please try again later.');
+      console.error('Request failed:', error);
+      throw error;
     }
   }
 
   async fetchPosts({ section = 'popular', sortBy = 'hot', after = null, limit = 25 }) {
-    let endpoint;
-    const params = { 
-      limit: Math.min(limit, 50).toString()
-    };
-    
-    if (after) {
-      params.after = after;
-      params.count = limit;
-    }
+    try {
+      let endpoint;
+      const params = { limit: Math.min(limit, 100) };
+      
+      if (after) {
+        params.after = after;
+      }
 
-    switch (section) {
-      case 'home':
-        switch (sortBy) {
-          case 'best':
-            endpoint = '/best.json';
-            break;
-          case 'hot':
-            endpoint = '/hot.json';
-            break;
-          case 'new':
-            endpoint = '/new.json';
-            break;
-          case 'top':
-            endpoint = '/top.json';
-            params.t = 'day'; // Default time filter for top posts
-            break;
-          default:
-            endpoint = '/best.json';
-        }
-        break;
-      case 'popular':
-        endpoint = `/r/popular/${sortBy}.json`;
-        break;
-      case 'all':
-        endpoint = `/r/all/${sortBy}.json`;
-        break;
-      default:
-        endpoint = '/r/popular.json';
-    }
+      // Simplified endpoint logic
+      switch (section) {
+        case 'home':
+          endpoint = sortBy === 'best' ? '/best' : `/${sortBy}`;
+          break;
+        case 'popular':
+          endpoint = `/r/popular/${sortBy}`;
+          break;
+        case 'all':
+          endpoint = `/r/all/${sortBy}`;
+          break;
+        default:
+          endpoint = '/r/popular';
+      }
 
-    return this.makeRequest(endpoint, params);
+      endpoint = `${endpoint}.json`;
+      console.log(`Fetching posts from ${endpoint}`);
+
+      const data = await this.makeRequest(endpoint, params);
+      
+      if (!data?.data?.children) {
+        throw new Error('Invalid response from Reddit');
+      }
+
+      return data;
+    } catch (error) {
+      console.error('Error fetching posts:', error);
+      throw new Error(`Failed to load ${section} posts: ${error.message}`);
+    }
   }
 
   async searchPosts({ query, sortBy = 'relevance', after = null, limit = 25 }) {

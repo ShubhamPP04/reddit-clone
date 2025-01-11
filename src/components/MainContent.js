@@ -35,6 +35,11 @@ function MainContent({ currentSection }) {
         setLoadingMore(true);
       }
 
+      // Add delay between retries
+      if (isRetry) {
+        await new Promise(resolve => setTimeout(resolve, retryCountRef.current * 1000));
+      }
+
       const data = await redditAPI.fetchPosts({
         section: currentSection,
         sortBy,
@@ -43,37 +48,57 @@ function MainContent({ currentSection }) {
       });
 
       if (!data?.data?.children) {
-        throw new Error('No posts available at the moment. Please try again later.');
+        console.error('Invalid data structure:', data);
+        throw new Error(`Unable to load ${currentSection} posts. Please try again later.`);
       }
 
-      const newPosts = data.data.children
-        .filter(child => child.data && child.kind === 't3')
+      const validPosts = data.data.children
+        .filter(child => child && child.data && child.kind === 't3')
         .map(child => ({
           id: child.data.id,
-          title: child.data.title,
-          author: child.data.author,
-          subreddit: child.data.subreddit,
-          created_utc: child.data.created_utc,
-          num_comments: child.data.num_comments,
-          score: child.data.score,
+          title: child.data.title || 'Untitled Post',
+          author: child.data.author || '[deleted]',
+          subreddit: child.data.subreddit || 'unknown',
+          created_utc: child.data.created_utc || Date.now() / 1000,
+          num_comments: child.data.num_comments || 0,
+          score: child.data.score || 0,
           thumbnail: child.data.thumbnail,
           url: child.data.url,
           permalink: child.data.permalink
         }));
 
-      setPosts(prevPosts => reset ? newPosts : [...prevPosts, ...newPosts]);
+      if (validPosts.length === 0 && !isRetry && retryCountRef.current < maxRetries) {
+        console.log('No posts found, retrying...');
+        retryCountRef.current++;
+        return fetchPosts(reset, true);
+      }
+
+      if (validPosts.length === 0) {
+        throw new Error(`No posts found in ${currentSection}. Please try again later.`);
+      }
+
+      setPosts(prevPosts => reset ? validPosts : [...prevPosts, ...validPosts]);
       setAfter(data.data.after);
       setError(null);
       retryCountRef.current = 0;
     } catch (err) {
       if (err.name === 'AbortError') return;
+      
       console.error('Error fetching posts:', err);
-      setError('Failed to load posts from Reddit. Please try again later.');
+      
+      if (!isRetry && retryCountRef.current < maxRetries) {
+        console.log('Retrying due to error...');
+        retryCountRef.current++;
+        return fetchPosts(reset, true);
+      }
+      
+      setError(err.message || `Failed to load ${currentSection} posts. Please try again.`);
+      setPosts(prevPosts => reset ? [] : prevPosts);
     } finally {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [currentSection, sortBy, after]);
+  }, [currentSection, sortBy, after, maxRetries]);
 
   useEffect(() => {
     fetchPosts(true);
